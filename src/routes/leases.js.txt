@@ -1,0 +1,233 @@
+Import express from ‘express’;
+Import { prisma } from ‘../index.js’;
+Import { z } from ‘zod’;
+Import { logAudit } from ‘../utils/helpers.js’;
+
+Const router = express.Router();
+
+Const createLeaseSchema = z.object({
+  unitId: z.string(),
+  tenantId: z.string(),
+  templateLeaseUrl: z.string().url(),
+  checklistJson: z.string().optional(),
+  commencementDate: z.string().transform((s) => new Date(s)),
+  agreementPeriodMonths: z.number().int().positive(),
+  rentAmount: z.number().positive(),
+  maintenanceAmount: z.number().positive(),
+  securityDeposit: z.number().positive(),
+  vacatingSettlementAmount: z.number().positive(),
+  flatNumber: z.string()
+});
+
+Const approveLeaseSchema = z.object({
+  checklistJson: z.string().optional()
+});
+
+Const rejectLeaseSchema = z.object({
+  rejectionReason: z.string().min(1)
+});
+
+Router.get(‘/’, async (req, res) => {
+  Const { status, propertyId } = req.query;
+
+  Const where = {};
+  If (status) {
+    Where.status = status;
+  }
+  If (propertyId) {
+    Where.unit = {
+      propertyId
+    };
+  }
+
+  Const leases = await prisma.lease.findMany({
+    Where,
+    Include: {
+      Unit: { select: { id: true, unitNumber: true, propertyId: true } },
+      Tenant: { select: { id: true, name: true } },
+      Creator: { select: { id: true, name: true, email: true } },
+      Approver: { select: { id: true, name: true } }
+    },
+    orderBy: { createdAt: ‘desc’ }
+  });
+
+  Res.json(leases);
+});
+
+Router.get(‘/:id’, async (req, res) => {
+  Const lease = await prisma.lease.findUnique({
+    Where: { id: req.params.id },
+    Include: {
+      Unit: true,
+      Tenant: true,
+      Creator: { select: { id: true, name: true, email: true } },
+      Approver: { select: { id: true, name: true } }
+    }
+  });
+  If (!lease) return res.status(404).json({ error: ‘Lease not found’ });
+  Res.json(lease);
+});
+
+Router.post(‘/’, async (req, res) => {
+  Try {
+    Const body = createLeaseSchema.parse(req.body);
+
+    Const lease = await prisma.lease.create({
+      Data: {
+        …body,
+        Status: ‘DRAFT’,
+        createdBy: req.user.id
+      },
+      Include: {
+        Unit: true,
+        Tenant: true
+      }
+    });
+
+    Await logAudit(
+      Req.user.id,
+      ‘CREATE’,
+      ‘Lease’,
+      Lease.id,
+      { action: ‘created_draft’, data: body }
+    );
+
+    Res.status(201).json(lease);
+  } catch € {
+    Res.status(400).json({ error: ‘Invalid input’, details: e.message });
+  }
+});
+
+Router.put(‘/:id’, async (req, res) => {
+  Try {
+    Const lease = await prisma.lease.findUnique({ where: { id: req.params.id } });
+    If (!lease) return res.status(404).json({ error: ‘Lease not found’ });
+
+    If (![‘DRAFT’, ‘PENDING_APPROVAL’].includes(lease.status)) {
+      Return res.status(400).json({ error: ‘Cannot update lease in this status’ });
+    }
+
+    If (req.user.role !== ‘ADMIN’ && lease.createdBy !== req.user.id) {
+      Return res.status(403).json({ error: ‘Forbidden’ });
+    }
+
+    Const body = createLeaseSchema.partial().parse(req.body);
+
+    Const updated = await prisma.lease.update({
+      Where: { id: lease.id },
+      Data: body,
+      Include: { unit: true, tenant: true }
+    });
+
+    Await logAudit(
+      Req.user.id,
+      ‘UPDATE’,
+      ‘Lease’,
+      Lease.id,
+      { action: ‘updated’, changes: body }
+    );
+
+    Res.json(updated);
+  } catch € {
+    Res.status(400).json({ error: ‘Invalid input’, details: e.message });
+  }
+});
+
+Router.post(‘/:id/submit-for-approval’, async (req, res) => {
+  Const lease = await prisma.lease.findUnique({ where: { id: req.params.id } });
+  If (!lease) return res.status(404).json({ error: ‘Lease not found’ });
+
+  If (lease.status !== ‘DRAFT’) {
+    Return res.status(400).json({ error: ‘Only DRAFT leases can be submitted for approval’ });
+  }
+
+  Const updated = await prisma.lease.update({
+    Where: { id: lease.id },
+    Data: { status: ‘PENDING_APPROVAL’ }
+  });
+
+  Await logAudit(
+    Req.user.id,
+    ‘UPDATE’,
+    ‘Lease’,
+    Lease.id,
+    { action: ‘submitted_for_approval’ }
+  );
+
+  Res.json(updated);
+});
+
+Router.post(‘/:id/approve’, async (req, res) => {
+  If (req.user.role !== ‘ADMIN’) {
+    Return res.status(403).json({ error: ‘Only admins can approve leases’ });
+  }
+
+  Const lease = await prisma.lease.findUnique({ where: { id: req.params.id } });
+  If (!lease) return res.status(404).json({ error: ‘Lease not found’ });
+
+  If (lease.status !== ‘PENDING_APPROVAL’) {
+    Return res.status(400).json({ error: ‘Only PENDING_APPROVAL leases can be approved’ });
+  }
+
+  Const body = approveLeaseSchema.parse(req.body || {});
+
+  Const updated = await prisma.lease.update({
+    Where: { id: lease.id },
+    Data: {
+      Status: ‘APPROVED’,
+      approvedBy: req.user.id,
+      approvedAt: new Date(),
+      checklistJson: body.checklistJson ?? lease.checklistJson
+    },
+    Include: { unit: true, tenant: true }
+  });
+
+  Await logAudit(
+    Req.user.id,
+    ‘APPROVE’,
+    ‘Lease’,
+    Lease.id,
+    { action: ‘approved’ }
+  );
+
+  Res.json(updated);
+});
+
+Router.post(‘/:id/reject’, async (req, res) => {
+  If (req.user.role !== ‘ADMIN’) {
+    Return res.status(403).json({ error: ‘Only admins can reject leases’ });
+  }
+
+  Const lease = await prisma.lease.findUnique({ where: { id: req.params.id } });
+  If (!lease) return res.status(404).json({ error: ‘Lease not found’ });
+
+  If (lease.status !== ‘PENDING_APPROVAL’) {
+    Return res.status(400).json({ error: ‘Only PENDING_APPROVAL leases can be rejected’ });
+  }
+
+  Const { rejectionReason } = rejectLeaseSchema.parse(req.body);
+
+  Const updated = await prisma.lease.update({
+    Where: { id: lease.id },
+    Data: {
+      Status: ‘REJECTED’,
+      rejectionReason,
+      approvedBy: null,
+      approvedAt: null
+    },
+    Include: { unit: true, tenant: true }
+  });
+
+  Await logAudit(
+    Req.user.id,
+    ‘REJECT’,
+    ‘Lease’,
+    Lease.id,
+    { action: ‘rejected’, reason: rejectionReason }
+  );
+
+  Res.json(updated);
+});
+
+Export default router;
+

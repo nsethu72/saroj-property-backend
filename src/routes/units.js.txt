@@ -1,0 +1,57 @@
+Import express from ‘express’;
+Import { prisma } from ‘../index.js’;
+Import { z } from ‘zod’;
+Import { logAudit } from ‘../utils/helpers.js’;
+
+Const router = express.Router();
+
+Const createUnitSchema = z.object({
+  propertyId: z.string(),
+  unitNumber: z.string(),
+  unitType: z.string(),
+  areaSqft: z.number().int().positive().optional(),
+  status: z.enum([‘VACANT’, ‘OCCUPIED’, ‘MAINTENANCE’]).optional()
+});
+
+Router.get(‘/’, async (req, res) => {
+  Const { propertyId } = req.query;
+  If (!propertyId) {
+    Return res.status(400).json({ error: ‘propertyId query param required’ });
+  }
+
+  Const units = await prisma.unit.findMany({
+    Where: { propertyId },
+    Include: { property: true },
+    orderBy: { unitNumber: ‘asc’ }
+  });
+
+  Res.json(units);
+});
+
+Router.post(‘/’, async (req, res) => {
+  Try {
+    Const body = createUnitSchema.parse(req.body);
+    Const unit = await prisma.unit.create({
+      Data: {
+        …body,
+        Status: body.status || ‘VACANT’
+      },
+      Include: { property: true }
+    });
+
+    Await logAudit(
+      Req.user.id,
+      ‘CREATE’,
+      ‘Unit’,
+      Unit.id,
+      { action: ‘created’, data: body }
+    );
+
+    Res.status(201).json(unit);
+  } catch € {
+    Res.status(400).json({ error: ‘Invalid input’, details: e.message });
+  }
+});
+
+Export default router;
+

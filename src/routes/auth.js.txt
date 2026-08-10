@@ -1,0 +1,58 @@
+Import express from ‘express’;
+Import bcrypt from ‘bcryptjs’;
+Import jwt from ‘jsonwebtoken’;
+Import { prisma } from ‘../index.js’;
+Import { z } from ‘zod’;
+
+Const router = express.Router();
+
+Const loginSchema = z.object({
+  Email: z.string().email(),
+  Password: z.string().min(6)
+});
+
+Router.post(‘/login’, async (req, res) => {
+  Try {
+    Const { email, password } = loginSchema.parse(req.body);
+    Const user = await prisma.user.findUnique({ where: { email } });
+    If (!user || !user.isActive) {
+      Return res.status(401).json({ error: ‘Invalid credentials’ });
+    }
+
+    Const valid = await bcrypt.compare(password, user.passwordHash);
+    If (!valid) {
+      Return res.status(401).json({ error: ‘Invalid credentials’ });
+    }
+
+    Const accessToken = jwt.sign(
+      { userId: user.id, role: user.role },
+      Process.env.JWT_ACCESS_SECRET,
+      { expiresIn: process.env.JWT_ACCESS_EXPIRY || ‘15m’ }
+    );
+
+    Const refreshToken = jwt.sign(
+      { userId: user.id },
+      Process.env.JWT_REFRESH_SECRET,
+      { expiresIn: process.env.JWT_REFRESH_EXPIRY || ‘7d’ }
+    );
+
+    Await prisma.refreshToken.create({
+      Data: {
+        userId: user.id,
+        token: refreshToken,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      }
+    });
+
+    Res.json({
+      User: { id: user.id, email: user.email, role: user.role },
+      accessToken,
+      refreshToken
+    });
+  } catch € {
+    Res.status(400).json({ error: ‘Invalid input’, details: e.message });
+  }
+});
+
+Export default router;
+

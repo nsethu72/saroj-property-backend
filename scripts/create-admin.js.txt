@@ -1,0 +1,47 @@
+Import ‘dotenv/config’;
+Import { PrismaClient } from ‘@prisma/client’;
+Import bcrypt from ‘bcryptjs’;
+
+Const prisma = new PrismaClient();
+
+Async function main() {
+  Const name = process.env.ADMIN_NAME || ‘Landlord Admin’;
+  Const email = process.env.ADMIN_EMAIL;
+  Const password = process.env.ADMIN_PASSWORD;
+
+  If (!email || !password) {
+    Console.error(‘Please set ADMIN_EMAIL and ADMIN_PASSWORD in .env’);
+    Process.exit(1);
+  }
+
+  Const existing = await prisma.user.findUnique({ where: { email } });
+  If (existing) {
+    Console.log(‘Admin user already exists:’, existing.email);
+    Return;
+  }
+
+  Const passwordHash = await bcrypt.hash(password, 10);
+
+  Const admin = await prisma.user.create({
+    Data: {
+      Name,
+      Email,
+      Role: ‘ADMIN’,
+      passwordHash,
+      isActive: true
+    },
+    Select: { id: true, email: true, role: true }
+  });
+
+  Console.log(‘Admin user created:’, admin);
+}
+
+Main()
+  .catch(€ => {
+    Console.error€;
+    Process.exit(1);
+  })
+  .finally(async () => {
+    Await prisma.$disconnect();
+  });
+

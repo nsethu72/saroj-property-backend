@@ -1,0 +1,9 @@
+// Stub implementation – replace with real FCM admin SDK when configured
+Export async function sendPushNotification(userId, { title, body }) {
+  // In a full implementation:
+  // - Look up user’s FCM device token(s) from a DeviceToken table
+  // - Use firebase-admin to send message
+  Console.log(`[FCM] To user ${userId}: ${title} - ${body}`);
+}
+
+v

@@ -1,0 +1,94 @@
+Import { prisma } from ‘../index.js’;
+Import { sendPushNotification } from ‘./notifications.js’;
+
+Export async function runRentReminders() {
+  Const now = new Date();
+
+  Const configs = await prisma.reminderConfig.findMany({
+    Where: { enabled: true }
+  });
+
+  Const globalConfig = configs.find(© => !c.propertyId) || {
+    daysBeforeDue: 3,
+    daysAfterDue: 1
+  };
+
+  Const beforeDate = new Date(now);
+  beforeDate.setDate(beforeDate.getDate() + globalConfig.daysBeforeDue);
+
+  const afterDate = new Date(now);
+  afterDate.setDate(afterDate.getDate() – globalConfig.daysAfterDue);
+
+  const dueSoon = await prisma.rentSchedule.findMany({
+    where: {
+      status: { in: [‘UNPAID’, ‘OVERDUE’] },
+      dueDate: {
+        lte: beforeDate
+      }
+    },
+    Include: {
+      Lease: {
+        Include: {
+          Tenant: true,
+          Unit: true
+        }
+      }
+    }
+  });
+
+  Const overdue = await prisma.rentSchedule.findMany({
+    Where: {
+      Status: ‘OVERDUE’,
+      dueDate: {
+        lte: afterDate
+      }
+    },
+    Include: {
+      Lease: {
+        Include: {
+          Tenant: true,
+          Unit: true
+        }
+      }
+    }
+  });
+
+  For (const schedule of dueSoon) {
+    Const user = await prisma.user.findFirst({ where: { role: ‘ADMIN’ } });
+    If (!user) continue;
+
+    Await sendPushNotification(user.id, {
+      Title: ‘Rent due soon’,
+      Body: `Rent of ${schedule.amount} due on ${schedule.dueDate.toDateString()} for flat ${schedule.lease.flatNumber}`
+    });
+
+    Await prisma.reminderLog.create({
+      Data: {
+        rentScheduleId: schedule.id,
+        type: ‘before_due’,
+        channel: ‘push’,
+        metadataJson: JSON.stringify({ scheduleId: schedule.id })
+      }
+    });
+  }
+
+  For (const schedule of overdue) {
+    Const user = await prisma.user.findFirst({ where: { role: ‘ADMIN’ } });
+    If (!user) continue;
+
+    Await sendPushNotification(user.id, {
+      Title: ‘Rent overdue’,
+      Body: `Rent of ${schedule.amount} overdue since ${schedule.dueDate.toDateString()} for flat ${schedule.lease.flatNumber}`
+    });
+
+    Await prisma.reminderLog.create({
+      Data: {
+        rentScheduleId: schedule.id,
+        type: ‘after_due’,
+        channel: ‘push’,
+        metadataJson: JSON.stringify({ scheduleId: schedule.id })
+      }
+    });
+  }
+}
+

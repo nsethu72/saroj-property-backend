@@ -1,0 +1,13 @@
+import { prisma } from '../index.js';
+
+export async function logAudit(userId, action, entityType, entityId, changes = null) {
+  await prisma.auditLog.create({
+    data: {
+      userId,
+      action,
+      entityType,
+      entityId,
+      changesJson: changes ? JSON.stringify(changes) : null
+    }
+  });
+}

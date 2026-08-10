@@ -1,0 +1,28 @@
+Import { S3Client, PutObjectCommand, GetObjectCommand } from ‘@aws-sdk/client-s3’;
+
+Const s3 = new S3Client({
+  Region: process.env.R2_REGION || ‘auto’,
+  Endpoint: process.env.R2_ENDPOINT,
+  Credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
+  }
+});
+
+Const BUCKET = process.env.R2_BUCKET;
+
+Export async function getUploadSignedUrl(key, contentType) {
+  Const command = new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+    ContentType: contentType
+  });
+  // For now, just return key; presigned URL logic can be added later.
+  Return { key };
+}
+
+Export function getFileUrl(key) {
+  Const accountId = process.env.R2_ENDPOINT.match(/https://(.+).r2.cloudflarestorage.com/)[1];
+  Return `https://${BUCKET}.${accountId}.r2.cloudflarestorage.com/${key}`;
+}
+
