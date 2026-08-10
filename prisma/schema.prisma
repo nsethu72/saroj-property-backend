@@ -1,0 +1,269 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  STAFF
+}
+
+enum LeaseStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  EXPIRED
+  TERMINATED
+}
+
+enum AssetStatus {
+  ACTIVE
+  REPAIR
+  RETIRED
+}
+
+enum UnitStatus {
+  VACANT
+  OCCUPIED
+  MAINTENANCE
+}
+
+enum RentStatus {
+  UNPAID
+  PAID
+  PARTIAL
+  OVERDUE
+}
+
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  phone         String?  @unique
+  role          Role     @default(STAFF)
+  passwordHash  String
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  createdProperties Property[] @relation("PropertyCreatedBy")
+  createdAssets     Asset[]    @relation("AssetCreatedBy")
+  createdFixtures   Fixture[]  @relation("FixtureCreatedBy")
+
+  createdLeases     Lease[]    @relation("LeaseCreatedBy")
+  approvedLeases    Lease[]    @relation("LeaseApprovedBy")
+
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
+}
+
+model Property {
+  id            String   @id @default(cuid())
+  name          String
+  addressLine1  String
+  addressLine2  String?
+  city          String
+  state         String
+  pincode       String
+  propertyPrefix String
+  scheduleJson  String?  // JSON string for schedule + default clauses
+  createdBy     String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  creator       User     @relation("PropertyCreatedBy", fields: [createdBy], references: [id])
+
+  units         Unit[]
+  assets        Asset[]
+}
+
+model Unit {
+  id            String     @id @default(cuid())
+  propertyId    String
+  unitNumber    String
+  unitType      String
+  areaSqft      Int?
+  status        UnitStatus @default(VACANT)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  property      Property   @relation(fields: [propertyId], references: [id])
+
+  leases        Lease[]
+  fixtures      Fixture[]
+}
+
+model Tenant {
+  id                 String   @id @default(cuid())
+  name               String
+  residentialAddress String
+  aadhaarNumber      String
+  panNumber          String
+  otherIdType        String
+  otherIdNumber      String
+  companyName        String
+  workPlace          String
+  documentUrls       String[] // at least 2
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  leases             Lease[]
+}
+
+model Lease {
+  id                      String      @id @default(cuid())
+  unitId                  String
+  tenantId                String
+  templateLeaseUrl        String
+  checklistJson           String?     // JSON: which clauses included
+  commencementDate        DateTime
+  agreementPeriodMonths   Int
+  rentAmount              Float
+  maintenanceAmount       Float
+  securityDeposit         Float
+  vacatingSettlementAmount Float
+  flatNumber              String
+  status                  LeaseStatus @default(DRAFT)
+  createdBy               String
+  approvedBy              String?
+  approvedAt              DateTime?
+  rejectionReason         String?
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
+
+  unit        Unit   @relation(fields: [unitId], references: [id])
+  tenant      Tenant @relation(fields: [tenantId], references: [id])
+  creator     User   @relation("LeaseCreatedBy", fields: [createdBy], references: [id])
+  approver    User?  @relation("LeaseApprovedBy", fields: [approvedBy], references: [id])
+
+  rentSchedules RentSchedule[]
+}
+
+model Asset {
+  id              String      @id @default(cuid())
+  propertyId      String
+  assetCode       String      @unique
+  name            String
+  category        String
+  purchaseDate    DateTime
+  purchaseValue   Float
+  warrantyExpiry  DateTime
+  amcValidUpto    DateTime
+  status          AssetStatus @default(ACTIVE)
+  photos          String[]
+  createdBy       String
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  property        Property    @relation(fields: [propertyId], references: [id])
+  creator         User        @relation("AssetCreatedBy", fields: [createdBy], references: [id])
+
+  renewals        AssetRenewal[]
+  repairs         AssetRepair[]
+}
+
+model AssetRenewal {
+  id            String   @id @default(cuid())
+  assetId       String
+  renewalType   String   // "AMC" or "warranty"
+  startDate     DateTime
+  endDate       DateTime
+  cost          Float
+  vendor        String?
+  billUrl       String?
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  asset         Asset    @relation(fields: [assetId], references: [id])
+}
+
+model AssetRepair {
+  id          String   @id @default(cuid())
+  assetId     String
+  repairDate  DateTime
+  description String
+  billUrl     String?
+  cost        Float
+  vendor      String?
+  performedBy String?
+  createdAt   DateTime @default(now())
+
+  asset       Asset    @relation(fields: [assetId], references: [id])
+}
+
+model Fixture {
+  id          String   @id @default(cuid())
+  unitId      String
+  name        String
+  category    String
+  quantity    Int
+  condition   String
+  notes       String?
+  photos      String[]
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  unit        Unit     @relation(fields: [unitId], references: [id])
+  creator     User     @relation("FixtureCreatedBy", fields: [createdBy], references: [id])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String
+  action      String
+  entityType  String
+  entityId    String
+  changesJson String?
+  timestamp   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model RentSchedule {
+  id          String     @id @default(cuid())
+  leaseId     String
+  dueDate     DateTime
+  amount      Float
+  status      RentStatus @default(UNPAID)
+  paidAt      DateTime?
+  paidAmount  Float?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  lease       Lease      @relation(fields: [leaseId], references: [id])
+}
+
+model ReminderConfig {
+  id              String   @id @default(cuid())
+  propertyId      String?  // null = global config
+  daysBeforeDue   Int      @default(3)
+  daysAfterDue    Int      @default(1)
+  enabled         Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model ReminderLog {
+  id            String   @id @default(cuid())
+  rentScheduleId String
+  type          String   // "before_due", "after_due"
+  sentAt        DateTime @default(now())
+  channel       String   // "push", "email"
+  metadataJson  String?
+}
